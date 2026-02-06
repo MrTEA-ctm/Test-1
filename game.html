@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Juego 3D Sandbox</title>
+<style>
+body{margin:0;overflow:hidden;font-family:Arial}
+#menu{position:fixed;inset:0;background:#000;color:white;display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:10}
+#hud{position:fixed;top:10px;left:10px;color:#fff;text-shadow:0 0 6px black;font-size:16px}
+#inv{position:fixed;bottom:10px;left:50%;transform:translateX(-50%);color:white}
+button{padding:14px 40px;font-size:22px}
+</style>
+</head>
+<body>
+
+<div id="menu">
+<h1>JUEGO 3D SANDBOX</h1>
+<p>Teclado + Mando</p>
+<button id="start">Jugar</button>
+</div>
+
+<div id="hud"></div>
+<div id="inv"></div>
+
+<script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+
+<script>
+let scene,camera,renderer,player;
+let yaw=0,pitch=0,keys={};
+let bullets=[],enemies=[],boss=null;
+let health=100,score=0,wave=1;
+let weapon=0;
+const weapons=[
+{speed:.8,damage:1,spread:0},
+{speed:1.1,damage:1.5,spread:.05},
+{speed:.7,damage:3,spread:.2}
+];
+let playing=false;
+
+init();
+
+function init(){
+scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+
+camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,0.1,1000);
+renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff,.3));
+let sun=new THREE.DirectionalLight(0xffffff,1);
+sun.position.set(30,60,20);
+scene.add(sun);
+
+const ground=new THREE.Mesh(
+new THREE.PlaneGeometry(500,500),
+new THREE.MeshStandardMaterial({color:0x2e8b57})
+);
+ground.rotation.x=-Math.PI/2;
+scene.add(ground);
+
+player=new THREE.Mesh(
+new THREE.BoxGeometry(1,2,1),
+new THREE.MeshStandardMaterial({color:0xff3333})
+);
+player.position.y=1;
+scene.add(player);
+
+spawnWave();
+
+document.addEventListener("keydown",e=>{
+keys[e.key.toLowerCase()]=true;
+if(e.key==="1")weapon=0;
+if(e.key==="2")weapon=1;
+if(e.key==="3")weapon=2;
+});
+document.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+
+document.addEventListener("mousemove",e=>{
+if(!playing)return;
+yaw-=e.movementX*0.002;
+pitch=Math.max(-1.2,Math.min(1.2,pitch-e.movementY*0.002));
+});
+
+document.addEventListener("mousedown",shoot);
+
+window.onresize=()=>{
+camera.aspect=innerWidth/innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(innerWidth,innerHeight);
+};
+
+loadGame();
+}
+
+start.onclick=()=>{
+menu.style.display="none";
+document.body.requestPointerLock();
+playing=true;
+animate();
+};
+
+function spawnEnemy(){
+const e=new THREE.Mesh(
+new THREE.BoxGeometry(1.5,1.5,1.5),
+new THREE.MeshStandardMaterial({color:0x3344ff})
+);
+e.position.set(Math.random()*300-150,0.75,Math.random()*300-150);
+e.hp=3+wave;
+scene.add(e);
+enemies.push(e);
+}
+
+function spawnBoss(){
+boss=new THREE.Mesh(
+new THREE.BoxGeometry(6,6,6),
+new THREE.MeshStandardMaterial({color:0x880000})
+);
+boss.position.set(0,3,-80);
+boss.hp=80+wave*20;
+scene.add(boss);
+}
+
+function spawnWave(){
+for(let i=0;i<wave*6;i++)spawnEnemy();
+if(wave%5===0)spawnBoss();
+}
+
+function shoot(){
+if(!playing)return;
+let w=weapons[weapon];
+for(let i=0;i<(weapon===2?5:1);i++){
+const b=new THREE.Mesh(
+new THREE.SphereGeometry(.15,8,8),
+new THREE.MeshBasicMaterial({color:0xffff00})
+);
+b.position.copy(player.position);
+let angle=yaw+(Math.random()-.5)*w.spread;
+b.dir=new THREE.Vector3(Math.sin(angle),0,Math.cos(angle));
+b.speed=w.speed;
+b.damage=w.damage;
+scene.add(b);
+bullets.push(b);
+}
+}
+
+function updateMovement(){
+let f=0,s=0;
+if(keys.w)f++; if(keys.s)f--; if(keys.a)s++; if(keys.d)s--;
+
+const dx=Math.sin(yaw),dz=Math.cos(yaw);
+player.position.x+=(dx*f+dz*s)*0.15;
+player.position.z+=(dz*f-dx*s)*0.15;
+}
+
+function updateCamera(){
+camera.position.set(
+player.position.x-Math.sin(yaw)*6,
+player.position.y+3+pitch*2,
+player.position.z-Math.cos(yaw)*6
+);
+camera.lookAt(player.position);
+}
+
+function updateBullets(){
+for(let i=bullets.length-1;i>=0;i--){
+let b=bullets[i];
+b.position.add(b.dir.clone().multiplyScalar(b.speed));
+if(b.position.distanceTo(player.position)>300){
+scene.remove(b);bullets.splice(i,1);
+}
+}
+}
+
+function hitEnemy(e,dmg){
+e.hp-=dmg;
+if(e.hp<=0){
+scene.remove(e);
+enemies.splice(enemies.indexOf(e),1);
+score+=10;
+}
+}
+
+function updateEnemies(){
+enemies.forEach(e=>{
+let d=new THREE.Vector3().subVectors(player.position,e.position);
+let dist=d.length();
+d.normalize();
+e.position.add(d.multiplyScalar(.04+.01*wave));
+if(dist<1.5){health-=.3;if(health<=0)gameOver();}
+});
+
+if(boss){
+let d=new THREE.Vector3().subVectors(player.position,boss.position);
+let dist=d.length();
+d.normalize();
+boss.position.add(d.multiplyScalar(.02));
+if(dist<4){health-=.6}
+if(boss.hp<=0){
+scene.remove(boss);
+boss=null;
+score+=200;
+}
+}
+
+for(let i=bullets.length-1;i>=0;i--){
+let b=bullets[i];
+enemies.forEach(e=>{
+if(e.position.distanceTo(b.position)<1){
+hitEnemy(e,b.damage);
+scene.remove(b);bullets.splice(i,1);
+}
+});
+if(boss && boss.position.distanceTo(b.position)<4){
+boss.hp-=b.damage;
+scene.remove(b);bullets.splice(i,1);
+}
+}
+
+if(enemies.length===0 && !boss){
+wave++;
+spawnWave();
+saveGame();
+}
+}
+
+function updateHUD(){
+hud.innerHTML=
+`❤️ ${health|0} | 🏆 ${score} | 🌊 Oleada ${wave}<br>
+Arma: ${["Pistola","Rifle","Escopeta"][weapon]}`;
+inv.innerHTML="1 Pistola | 2 Rifle | 3 Escopeta";
+}
+
+function saveGame(){
+localStorage.setItem("gameSave",JSON.stringify({wave,score,health}));
+}
+
+function loadGame(){
+let s=localStorage.getItem("gameSave");
+if(!s)return;
+let d=JSON.parse(s);
+wave=d.wave||1;
+score=d.score||0;
+health=d.health||100;
+}
+
+function gameOver(){
+localStorage.removeItem("gameSave");
+alert("GAME OVER\nPuntaje: "+score);
+location.reload();
+}
+
+function animate(){
+requestAnimationFrame(animate);
+updateMovement();
+updateCamera();
+updateBullets();
+updateEnemies();
+updateHUD();
+renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
